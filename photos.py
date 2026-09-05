@@ -28,6 +28,24 @@ if not DB: sys.exit("לא מצאתי knesset_web.db. הריצי מתוך תיק�
 OUT = os.path.join(os.path.dirname(os.path.abspath(DB)), "photos.json")
 
 
+
+# ערך על אדם, או לא. בלי הבדיקה הזו חיפוש על "חיים כ\"ץ" החזיר
+# את הערך של האות כ' באלפבית, כולל התמונה שלה.
+NOT_PERSON = re.compile(r"היא האות|הוא האות|האות ה-\d+|ערך זה עוסק|"
+                        r"עשוי להתייחס|פירושונים|היא מפלגה|הוא יישוב|"
+                        r"הוא ארגון|היא עיר|הוא סרט|הוא ספר")
+PERSON = re.compile(r"נולדה?\s|הוא פוליטיקאי|היא פוליטיקאית|הוא איש|היא אשת|"
+                    r"חבר הכנסת|חברת הכנסת|הוא ישראלי|היא ישראלית|"
+                    r"הוא עורך|היא עורכת|הוא רב|שירת|כיהן|כיהנה")
+
+
+def is_person(extract, title=""):
+    e = extract or ""
+    if NOT_PERSON.search(e[:300]): return False
+    if len(title) <= 2: return False
+    return bool(PERSON.search(e[:400]))
+
+
 def req(params, tries=4):
     for a in range(tries):
         try:
@@ -97,6 +115,8 @@ for i in range(0, len(need), 40):
         img = (p.get("thumbnail") or {}).get("source")
         ex = re.sub(r"\s+", " ", (p.get("extract") or "")).strip()
         if not img and len(ex) < 30: continue
+        if ex and not is_person(ex, p.get("title", "")):
+            print(f"   דילוג: '{asked}' — הערך אינו על אדם"); continue
         have[str(pid)] = {"img": img, "url": p.get("fullurl"), "sum": ex[:400]}
         found += 1
     print(f"   {min(i + 40, len(need))}/{len(need)} · נמצאו {found}", flush=True)
@@ -118,6 +138,8 @@ if still:
             p0 = pg[0]
             img = (p0.get("thumbnail") or {}).get("source")
             ex = re.sub(r"\s+", " ", (p0.get("extract") or "")).strip()
+            if not is_person(ex, p0.get("title", "")):
+                continue          # תוצאת חיפוש שאינה ערך על אדם
             if img or len(ex) >= 30:
                 have[str(people[n])] = {"img": img, "url": p0.get("fullurl"),
                                         "sum": ex[:400], "via": "search"}
