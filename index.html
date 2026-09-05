@@ -108,9 +108,21 @@ main{padding:0 0 20px}
 .pill.f{border-color:#2C6B52;color:var(--for)}
 .pill.a{border-color:#7A3345;color:var(--against)}
 .pill.on{background:var(--flag);border-color:var(--flag);color:#fff}
+.av{width:38px;height:46px;flex:none;background:var(--panel2);
+  border:1px solid var(--rule);object-fit:cover;object-position:top;
+  display:grid;place-items:center;font:700 13px 'Frank Ruhl Libre',serif;
+  color:var(--sky)}
+.av.big{width:74px;height:92px;font-size:24px}
+.withav{display:flex;gap:11px;align-items:flex-start}
+.withav>div{flex:1;min-width:0}
 .add{width:34px;height:34px;flex:none;border:1px solid var(--rule);
   font-size:17px;color:var(--dim);align-self:flex-start}
 .add.on{background:var(--flag);border-color:var(--flag);color:#fff}
+.views{display:flex;gap:1px;background:var(--rule-2);border:1px solid var(--rule-2);
+  margin:0 var(--pad) 14px}
+.views button{flex:1;background:var(--panel);padding:9px 4px;font-size:12.5px;
+  color:var(--dim);line-height:1.3}
+.views button.on{background:var(--flag);color:#fff}
 .stance{display:flex;gap:6px;margin-top:8px}
 .stance button{flex:1;border:1px solid var(--rule);padding:6px;font-size:12px;
   color:var(--dim)}
@@ -240,14 +252,29 @@ main{padding:0 0 20px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+// שמות כמו ש"ס וחד"ש-תע"ל שוברים תגיות HTML אם לא בורחים מהם
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const bmsg=t=>$("#bmsg").textContent=t, bbar=p=>$("#bbar i").style.width=p+"%";
-let DB=null, CAND=null, PEOPLE=null;
-const S={tab:"answer",faction:null,topic:null,d0:null,d1:null,sort:"n"};
-const SORTS={answer:"n",votes:"d",basket:"m",people:"n",cand:"p",snap:"r"};
+let DB=null, CAND=null, PEOPLE=null, PHOTOS={};
+// תמונה לפי מזהה אדם, ואם אין — ראשי תיבות
+const initials=n=>String(n||"").split(" ").filter(Boolean)
+  .map(w=>w[0]).join("").slice(0,2);
+function avatar(pid,name,cls){
+  const p=PHOTOS[pid]||{}, src=p.img||null;
+  return src
+    ? `<img class="av ${cls||""}" src="${esc(src)}" alt="" loading="lazy"
+        onerror="this.replaceWith(Object.assign(document.createElement('span'),
+          {className:'av ${cls||""}',textContent:'${esc(initials(name))}'}))">`
+    : `<span class="av ${cls||""}">${esc(initials(name))}</span>`;
+}
+const S={tab:"answer",faction:null,topic:null,d0:null,d1:null,sort:"n",bview:"mk"};
+const SORTS={answer:"n",votes:"d",basket:"a",people:"n",cand:"p",snap:"r"};
 // הסל נשמר בין ביקורים. stance = העמדה שהמשתמש/ת סימנ/ה לכל הצבעה.
 let BASKET=[], STANCE={};
 try{BASKET=JSON.parse(localStorage.knBasket||"[]");
     STANCE=JSON.parse(localStorage.knStance||"{}");}catch(e){}
+function clearCache(){CACHE.clear();}
 function saveBasket(){
   try{localStorage.knBasket=JSON.stringify(BASKET);
       localStorage.knStance=JSON.stringify(STANCE);}catch(e){}
@@ -281,6 +308,7 @@ async function boot(){
     DB=new SQL.Database(buf);
     try{CAND=await (await fetch("candidates.json")).json();}catch(e){}
     try{PEOPLE=await (await fetch("people_index.json")).json();}catch(e){}
+    try{PHOTOS=await (await fetch("photos.json")).json();}catch(e){PHOTOS={};}
     init();
     $("#boot").style.display="none";
   }catch(e){
@@ -343,8 +371,8 @@ function openPick(title,items,cb){
     const s=(f||"").trim();
     $("#plist").innerHTML=items.filter(i=>!s||i.label.includes(s))
       .slice(0,400).map((i,n)=>
-      `<button data-v="${i.value??""}">${i.label}${i.note?
-        ` <small>${i.note}</small>`:""}</button>`).join("");
+      `<button data-v="${esc(i.value??"")}">${esc(i.label)}${i.note?
+        ` <small>${esc(i.note)}</small>`:""}</button>`).join("");
     $$("#plist button").forEach(b=>b.onclick=()=>{
       pickCb(b.dataset.v||null); closePick();});
   };
@@ -383,8 +411,37 @@ const topicFilter=()=>S.topic
 const dateFilter=()=>`AND v.date BETWEEN '${S.d0}' AND '${S.d1}'`;
 
 /* ─────────── תצוגה ─────────── */
+// קישור אחד לכל סוגי הלחיצה. נדרש גם אחרי שחזור מהמטמון,
+// שאחרת מאזיני הלחיצה אובדים.
+function bindOut(){
+  const o=$("#out");
+  o.onclick=e=>{
+    const t=e.target.closest("[data-add],[data-rm],[data-st],[data-v],[data-p],[data-c],[data-c2],[data-p2],[data-bv]");
+    if(!t) return;
+    if(t.dataset.bv!==undefined){S.bview=t.dataset.bv; return render();}
+    if(t.dataset.add!==undefined){e.stopPropagation();return toggleBasket(+t.dataset.add);}
+    if(t.dataset.rm!==undefined) return toggleBasket(+t.dataset.rm);
+    if(t.dataset.st!==undefined){
+      const id=+t.dataset.st, p=+t.dataset.p;
+      STANCE[id]===p ? delete STANCE[id] : STANCE[id]=p;
+      saveBasket(); clearCache(); return render();
+    }
+    if(t.dataset.v!==undefined) return openVote(+t.dataset.v);
+    if(t.dataset.p2!==undefined) return openPerson(+t.dataset.p2,+t.dataset.m2);
+    if(t.dataset.p!==undefined) return openPerson(+t.dataset.p,+t.dataset.m);
+    if(t.dataset.c!==undefined) return openCand(decodeURIComponent(t.dataset.c));
+    if(t.dataset.c2!==undefined) return openCand(decodeURIComponent(t.dataset.c2));
+  };
+}
+
+const CACHE=new Map();
+const sig=()=>[S.tab,S.faction,S.topic,S.d0,S.d1,S.sort,S.bview,BASKET.length,
+  Object.keys(STANCE).length].join("|");
 function render(){
   const o=$("#out");
+  const key=sig(), hit=CACHE.get(key);
+  if(hit){ o.innerHTML=hit.html; $("#count").textContent=hit.count;
+    $("#sort").innerHTML=hit.sort; $("#sort").value=hit.sv; bindOut(); return; }
   $("#sort").innerHTML={
     answer:`<option value="n">מיון: מספר הצבעות</option>
             <option value="f">מיון: אחוז בעד</option>`,
@@ -394,8 +451,8 @@ function render(){
             <option value="v">מיון: הצבעות</option>`,
     cand:`<option value="p">מיון: לפי רשימה</option>
           <option value="k">מיון: בעלי רקורד תחילה</option>`,
-    basket:`<option value="m">מיון: הכי הרבה הצבעות רלוונטיות</option>
-            <option value="a">מיון: הכי מסכים איתך</option>`,
+    basket:`<option value="a">מיון: אחוזי התאמה</option>
+            <option value="m">מיון: מספר הצבעות רלוונטיות</option>`,
     snap:`<option value="r">מיון: לפי מספר מכהנים</option>
           <option value="n">מיון: לפי גודל הרשימה</option>`}[S.tab];
   // מיון תקף לטאב הנוכחי בלבד; אחרת נופל לברירת המחדל שלו
@@ -406,6 +463,10 @@ function render(){
   try{
     ({answer:renderAnswer,votes:renderVotes,basket:renderBasket,
       people:renderPeople,cand:renderCand,snap:renderSnap})[S.tab](o);
+    bindOut();
+    CACHE.set(key,{html:o.innerHTML,count:$("#count").textContent,
+      sort:$("#sort").innerHTML,sv:$("#sort").value});
+    if(CACHE.size>40) CACHE.delete(CACHE.keys().next().value);
   }catch(err){
     console.error(err);
     o.innerHTML=`<div class="msg">התצוגה נכשלה.<br>
@@ -441,7 +502,7 @@ function renderAnswer(o){
    +rows.map(r=>{
     const t=r.yes+r.no+r.abs+r.oth, p=x=>x/t*100;
     return `<div class="fac">
-      <div class="top"><span class="nm">${r.f}</span>
+      <div class="top"><span class="nm">${esc(r.f)}</span>
         <span class="pill ${r.bl==="coalition"?"co":"op"}">${
           r.bl==="coalition"?"קואליציה":"אופוזיציה"}</span></div>
       <div class="split">
@@ -471,7 +532,7 @@ function renderVotes(o){
     <button class="add ${inBasket(r.id)?"on":""}" data-add="${r.id}"
       title="הוספה לסל">${inBasket(r.id)?"✓":"+"}</button>
     <button style="flex:1;text-align:start" data-v="${r.id}">
-    <div class="t">${r.t}</div>
+    <div class="t">${esc(r.t)}</div>
     ${r.sm?`<div style="font-size:12.5px;color:var(--dim);line-height:1.5;
       margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;
       -webkit-box-orient:vertical;overflow:hidden">${r.sm}</div>`:""}
@@ -481,9 +542,6 @@ function renderVotes(o){
     <div class="bar"><i class="f" style="width:${r.f/(r.f+r.a||1)*100}%"></i>
       <i class="a" style="flex:1"></i></div>
     </button></div>`).join("");
-  $$("#out [data-v]").forEach(b=>b.onclick=()=>openVote(+b.dataset.v));
-  $$("#out [data-add]").forEach(b=>b.onclick=e=>{
-    e.stopPropagation(); toggleBasket(+b.dataset.add);});
 }
 
 function renderPeople(o){
@@ -514,21 +572,30 @@ function renderPeople(o){
   if(!rows.length) return o.innerHTML=`<div class="msg">אין ח״כים שעונים לסינון.</div>`;
   o.innerHTML=rows.map(r=>{
     const ks=(r.ks||"").split(",").map(Number).sort((a,b)=>b-a);
-    return `<button class="item" data-p="${r.pid}" data-m="${r.mk}">
-    <div class="t">${r.nm}</div>
-    <div class="s"><span>${r.f}</span>
+    return `<button class="item withav" data-p="${r.pid}" data-m="${r.mk}">
+    ${avatar(r.pid,r.nm)}<div>
+    <div class="t">${esc(r.nm)}</div>
+    <div class="s"><span>${esc(r.f)}</span>
       <span class="pill ${r.bl==="coalition"?"co":"op"}">${
         r.bl==="coalition"?"קואליציה":"אופוזיציה"}</span>
       <span>כנסת ${ks.join(", ")}</span>
       ${r.ch?'<span class="pill">יו״ר סיעה</span>':""}
-      <span>· ${r.nv.toLocaleString()} הצבעות בטווח</span></div>
+      <span>· ${r.nv.toLocaleString()} הצבעות בטווח</span></div></div>
   </button>`}).join("");
-  $$("#out .item").forEach(b=>b.onclick=()=>openPerson(+b.dataset.p,+b.dataset.m));
 }
 
 function renderCand(o){
   if(!CAND) return o.innerHTML=`<div class="msg">candidates.json לא נטען.</div>`;
   let rows=CAND.rows.filter(r=>r.name);
+  // הסינון העליון הוא סיעה בכנסת; על מועמדים הוא מתפרש כ"מי שכיהן בה"
+  if(S.faction){
+    const ids=new Set(q(`SELECT DISTINCT person_id p FROM mk WHERE faction=?`,
+      [S.faction]).map(x=>x.p));
+    rows=rows.filter(r=>ids.has(r.person_id));
+    if(!rows.length) return o.innerHTML=`<div class="msg">
+      אף מועמד ברשימות לא כיהן בסיעת <b>${esc(S.faction)}</b>.<br>
+      אפשר לנקות את הסינון למעלה.</div>`;
+  }
   if(S.sort==="k") rows=[...rows].sort((a,b)=>
     (b.verified==="knesset")-(a.verified==="knesset"));
   const byList={};
@@ -536,22 +603,23 @@ function renderCand(o){
   $("#count").textContent=`${rows.length} מועמדים · ${Object.keys(byList).length} רשימות`;
   o.innerHTML=`<div class="legend" style="padding-bottom:10px">${CAND.note||""}</div>`
    +Object.entries(byList).map(([l,arr])=>
-    `<div class="sec"><h3>${l}</h3>${arr.map(r=>`
-      <button class="item" style="padding-inline:0;border:0"
+    `<div class="sec"><h3>${esc(l)}</h3>${arr.map(r=>`
+      <button class="item withav" style="padding-inline:0;border:0"
         data-c="${encodeURIComponent(r.name)}">
-        <div class="t">${r.pos?`<span class="n" style="color:var(--dim)">${r.pos}.</span> `:""}${r.name}</div>
+        ${r.wiki&&r.wiki.img?`<img class="av" src="${esc(r.wiki.img)}" alt="" loading="lazy">`
+          :avatar(r.person_id,r.name)}<div>
+        <div class="t">${r.pos?`<span class="n" style="color:var(--dim)">${r.pos}.</span> `:""}${esc(r.name)}</div>
         <div class="s">${
           r.verified==="knesset"?'<span class="pill co">רקורד בכנסת</span>':
           r.verified==="wikipedia"?'<span class="pill">ויקיפדיה</span>':
           '<span class="pill">ללא מקור</span>'}
           ${r.knessets?`<span>כנסת ${r.knessets.slice(0,4).join(", ")}</span>`:""}
           ${r.wiki&&r.wiki.cats&&r.wiki.cats.length?
-            `<span>${r.wiki.cats.slice(0,2).join(" · ")}</span>`:""}</div>
+            `<span>${esc(r.wiki.cats.slice(0,2).join(" · "))}</span>`:""}</div></div>
       </button>`).join("")}</div>`).join("");
-  $$("#out .item").forEach(b=>b.onclick=()=>
-    openCand(decodeURIComponent(b.dataset.c)));
 }
 
+const col=p=>p>=70?"var(--for)":p>=50?"var(--abstain)":"var(--against)";
 function renderBasket(o){
   $("#count").textContent=`${BASKET.length} חוקים בסל`;
   if(!BASKET.length) return o.innerHTML=`<div class="msg">
@@ -578,9 +646,101 @@ function renderBasket(o){
     return {mk:+mk,...d,agree,dis,seen:marked.filter(id=>d.v[id]).length};
   }).filter(x=>x.seen>0);
 
-  const sorted=S.sort==="a"
-    ? list.sort((a,b)=>b.agree/(b.agree+b.dis||1)-a.agree/(a.agree+a.dis||1))
-    : list.sort((a,b)=>b.seen-a.seen);
+  const pct=x=>Math.round(x.agree/(x.agree+x.dis||1)*100);
+  const cmp=S.sort==="a"
+    ? (a,b)=>pct(b)-pct(a)||b.seen-a.seen
+    : (a,b)=>b.seen-a.seen||pct(b)-pct(a);
+  const views=`<div class="views">${
+    [["mk","ח״כים"],["fac","סיעות בזמן ההצבעה"],["list","רשימות מתמודדות"]]
+      .map(([v,l])=>`<button class="${S.bview===v?"on":""}" data-bv="${v}">${l}</button>`)
+      .join("")}</div>`;
+  const strip=x=>`<div class="mini">${BASKET.map(id=>{
+      const g=x.v[id];
+      return `<i class="${g===1?"f":g===2?"a":g===3?"b":""}"></i>`;}).join("")}</div>`;
+
+  let body="";
+  if(S.bview==="mk"){
+    body=[...list].sort(cmp).slice(0,120).map(x=>{const p=pct(x);
+      return `<button class="item withav" style="padding-inline:0;
+        border-bottom:1px solid var(--rule-2)" data-p2="${x.pid}" data-m2="${x.mk}">
+        <div class="score">${avatar(x.pid,x.nm)}
+          <span style="flex:1;font-size:14.5px">${esc(x.nm)}
+            <span style="color:var(--dim);font-size:12px">${esc(x.f)}</span></span>
+          <span class="n" style="color:${col(p)}">${p}%</span></div>${strip(x)}
+        <div style="font-size:11.5px;color:var(--dim);margin-top:5px">
+          ${x.agree} כמוך · ${x.dis} הפוך · הצביע ב-${x.seen} מתוך ${BASKET.length}</div>
+      </button>`}).join("");
+  } else if(S.bview==="fac"){
+    // הסיעה שבה כיהן באותה קדנציה, לא הרשימה שהוא רץ בה היום
+    const g={};
+    list.forEach(x=>{const d=g[x.f] ??= {f:x.f,bl:x.bl,agree:0,dis:0,n:0};
+      d.agree+=x.agree; d.dis+=x.dis; d.n++;});
+    body=Object.values(g).sort(cmp).map(d=>{const p=pct(d);
+      return `<div class="item" style="padding-inline:0">
+        <div class="score"><span style="flex:1;font-size:15px">${esc(d.f)}
+          <span class="pill ${d.bl==="coalition"?"co":"op"}"
+            style="margin-inline-start:6px">${
+            d.bl==="coalition"?"קואליציה":"אופוזיציה"}</span></span>
+          <span class="n" style="color:${col(p)}">${p}%</span></div>
+        <div class="bar" style="height:8px"><i class="f" style="width:${p}%"></i>
+          <i class="a" style="flex:1"></i></div>
+        <div style="font-size:11.5px;color:var(--dim);margin-top:6px">
+          ${d.n} ח״כים · ${d.agree} הצבעות כמוך · ${d.dis} הפוך</div></div>`}).join("");
+  } else {
+    if(!CAND){ body=`<div class="msg">candidates.json לא נטען.</div>`; }
+    else{
+      const best={};
+      list.forEach(x=>{const c=best[x.pid];
+        if(!c||x.seen>c.seen) best[x.pid]=x;});
+      const g={};
+      CAND.rows.forEach(r=>{
+        const x=r.person_id&&best[r.person_id];
+        if(!x) return;
+        const d=g[r.list] ??= {l:r.list,members:[]};
+        d.members.push({nm:r.name,pid:r.person_id,mk:x.mk,p:pct(x),
+                        seen:x.seen,pos:r.pos});});
+      const lists=Object.values(g);
+      lists.forEach(d=>{
+        d.members.sort((a,b)=>b.p-a.p||b.seen-a.seen);
+        // ניקוד נטו: כל מועמד תורם בין 1- ל-1+ סביב 50%.
+        // כך שלושה ב-100% מנצחים שניים ב-100%, אבל חמישה ב-0%
+        // מוחקים אותם. השוואה איבר-איבר מלמעלה עשתה את ההפך —
+        // היא תגמלה על תוספת מועמדים גרועים.
+        d.net=d.members.reduce((s,m)=>s+(m.p-50)/50,0);
+        d.hi=d.members.filter(m=>m.p>=80).length;
+        d.lo=d.members.filter(m=>m.p<=20).length;
+        d.avg=Math.round(d.members.reduce((s,m)=>s+m.p,0)/d.members.length);
+      });
+      lists.sort((a,b)=>b.net-a.net||b.hi-a.hi||a.lo-b.lo);
+      const show=d=>d.members.length<=12 ? d.members
+        : [...d.members.slice(0,8),{gap:d.members.length-11},
+           ...d.members.slice(-3)];
+      body=lists.length?lists.map(d=>`<div class="sec" style="padding-inline:0">
+        <h3>${esc(d.l)}</h3>
+        <div class="split" style="height:9px;margin:-4px 0 8px">
+          ${d.members.map(m=>`<i class="${m.p>=80?"f":m.p<=20?"a":"b"}"
+            style="flex:1"></i>`).join("")}</div>
+        <div style="display:flex;font-size:11.5px;color:var(--dim);margin-bottom:10px">
+          <span style="flex:1">${d.members.length} עם רקורד ·
+            <span style="color:var(--for)">${d.hi} מעל 80%</span> ·
+            <span style="color:var(--against)">${d.lo} מתחת ל-20%</span></span>
+          <span class="n">נטו ${d.net>0?"+":""}${d.net.toFixed(1)}</span></div>
+        ${show(d).map(m=>m.gap?`<div style="font-size:11.5px;color:var(--none);
+          padding:6px 0;border-bottom:1px solid var(--rule-2)">
+          ועוד ${m.gap} מועמדים באמצע</div>`
+          :`<button class="item withav"
+          style="padding:8px 0;border-bottom:1px solid var(--rule-2)"
+          data-p2="${m.pid}" data-m2="${m.mk}">${avatar(m.pid,m.nm)}<div>
+          <div style="display:flex;font-size:14px"><span style="flex:1">${
+            m.pos?`<span class="n" style="color:var(--dim)">${m.pos}.</span> `:""}${
+            esc(m.nm)}</span>
+            <span class="n" style="color:${col(m.p)}">${m.p}%</span></div>
+          <div style="font-size:11px;color:var(--dim);margin-top:3px">
+            הצביע ב-${m.seen} מתוך ${BASKET.length}</div></div></button>`).join("")}
+      </div>`).join("")
+       :`<div class="msg">אף מועמד ברשימות לא הצביע על החוקים שבסל.</div>`;
+    }
+  }
 
   o.innerHTML=`<div class="sec"><h3>החוקים שבחרת</h3>${votes.map(v=>`
      <div style="border-bottom:1px solid var(--rule-2);padding-bottom:12px;
@@ -597,35 +757,24 @@ function renderBasket(o){
              <button class="a ${STANCE[v.id]===2?"on":""}" data-st="${v.id}" data-p="2">אני נגד</button>
            </div>
          </div></div></div>`).join("")}</div>
-   ${marked.length?`<div class="sec"><h3>מי הצביע כמוך · ${marked.length} מתוך ${BASKET.length} סומנו</h3>
-     ${sorted.slice(0,80).map(x=>{
-       const t=x.agree+x.dis||1, p=Math.round(x.agree/t*100);
-       return `<button class="item" style="padding-inline:0;border-bottom:1px solid var(--rule-2)"
-         data-p2="${x.pid}" data-m2="${x.mk}">
-         <div class="score"><span style="flex:1;font-size:14.5px">${x.nm}
-           <span style="color:var(--dim);font-size:12px">${x.f}</span></span>
-           <span class="n" style="color:${p>=60?"var(--for)":p<=40?"var(--against)":"var(--dim)"}">${p}%</span></div>
-         <div class="mini">${BASKET.map(id=>{
-           const g=x.v[id], cls=g===1?"f":g===2?"a":g===3?"b":"";
-           return `<i class="${cls}" title="${g===1?"בעד":g===2?"נגד":g===3?"נמנע":"לא הצביע"}"></i>`;
-         }).join("")}</div>
-         <div style="font-size:11.5px;color:var(--dim);margin-top:5px">
-           ${x.agree} כמוך · ${x.dis} הפוך · הצביע ב-${x.seen} מתוך ${BASKET.length}</div>
-       </button>`}).join("")}</div>`
+   ${marked.length?views+`<div class="sec" style="padding-top:0">
+     <h3>מי הצביע כמוך · ${marked.length} מתוך ${BASKET.length} סומנו</h3>
+     ${body}</div>`
     :`<div class="msg">סמני <b>אני בעד</b> או <b>אני נגד</b> בכל חוק,
         ואחשב מי הצביע כמוך.</div>`}`;
-  $$("#out [data-rm]").forEach(b=>b.onclick=()=>toggleBasket(+b.dataset.rm));
-  $$("#out [data-st]").forEach(b=>b.onclick=()=>{
-    const id=+b.dataset.st, p=+b.dataset.p;
-    STANCE[id]===p ? delete STANCE[id] : STANCE[id]=p;
-    saveBasket(); render();});
-  $$("#out [data-p2]").forEach(b=>b.onclick=()=>
-    openPerson(+b.dataset.p2,+b.dataset.m2));
 }
 
 function renderSnap(o){
   if(!CAND) return o.innerHTML=`<div class="msg">candidates.json לא נטען.</div>`;
-  const withRec=CAND.rows.filter(r=>r.person_id);
+  let src=CAND.rows;
+  if(S.faction){
+    const ids=new Set(q(`SELECT DISTINCT person_id p FROM mk WHERE faction=?`,
+      [S.faction]).map(x=>x.p));
+    src=src.filter(r=>ids.has(r.person_id));
+    if(!src.length) return o.innerHTML=`<div class="msg">
+      אף מועמד לא כיהן בסיעת <b>${esc(S.faction)}</b>.</div>`;
+  }
+  const withRec=src.filter(r=>r.person_id);
   const pids=[...new Set(withRec.map(r=>r.person_id))];
   if(!pids.length) return o.innerHTML=`<div class="msg">אין מועמדים עם רקורד.</div>`;
   const ph=pids.map(()=>"?").join(",");
@@ -647,7 +796,7 @@ function renderSnap(o){
    .forEach(x=>{if(rec[x.p]){rec[x.p].chair=x.ch||0; rec[x.p].cmt=x.n||0;}});
 
   const byList={};
-  CAND.rows.filter(r=>r.name).forEach(r=>(byList[r.list] ??= []).push(r));
+  src.filter(r=>r.name).forEach(r=>(byList[r.list] ??= []).push(r));
   const lists=Object.entries(byList).map(([l,arr])=>{
     const rs=arr.filter(r=>r.person_id).map(r=>rec[r.person_id]).filter(Boolean);
     return {l,arr,n:arr.length,exp:rs.length,
@@ -661,7 +810,7 @@ function renderSnap(o){
   o.innerHTML=`<div class="legend" style="padding-bottom:12px">
      מה שהאנשים שרצים היום עשו בכנסת. הרשימות מקורן בדיווח ולא בוועדת
      הבחירות — ${CAND.fetched||""}.</div>`
-   +lists.map(L=>`<div class="sec"><h3>${L.l}</h3>
+   +lists.map(L=>`<div class="sec"><h3>${esc(L.l)}</h3>
      <div class="grid" style="margin-bottom:12px">
        <div class="cell"><div class="v n">${L.n}</div><div class="k">מועמדים</div></div>
        <div class="cell"><div class="v n">${L.exp}</div><div class="k">כיהנו בעבר</div></div>
@@ -670,9 +819,11 @@ function renderSnap(o){
      </div>
      ${L.arr.map(r=>{
        const d=r.person_id?rec[r.person_id]:null;
-       return `<button class="item" style="padding-inline:0;border-bottom:1px solid var(--rule-2)"
+       return `<button class="item withav" style="padding-inline:0;border-bottom:1px solid var(--rule-2)"
          data-c2="${encodeURIComponent(r.name)}">
-         <div class="t">${r.pos?`<span class="n" style="color:var(--dim)">${r.pos}.</span> `:""}${r.name}</div>
+         ${r.wiki&&r.wiki.img?`<img class="av" src="${esc(r.wiki.img)}" alt="" loading="lazy">`
+           :avatar(r.person_id,r.name)}<div>
+         <div class="t">${r.pos?`<span class="n" style="color:var(--dim)">${r.pos}.</span> `:""}${esc(r.name)}</div>
          <div class="s">${d?
            `<span class="pill co">כנסת ${[...new Set(d.kn)].sort((x,y)=>y-x).slice(0,3).join(", ")}</span>
             <span>${d.tot.toLocaleString()} הצבעות</span>
@@ -680,11 +831,9 @@ function renderSnap(o){
             ${d.passed?`<span>(${d.passed} עברו)</span>`:""}
             ${d.chair?`<span>· יו״ר ${d.chair} ועדות</span>`:""}`
            :r.verified==="wikipedia"?`<span class="pill">ללא רקורד בכנסת · יש ערך בוויקיפדיה</span>`
-           :`<span class="pill">ללא רקורד וללא מקור</span>`}</div>
+           :`<span class="pill">ללא רקורד וללא מקור</span>`}</div></div>
        </button>`}).join("")}
    </div>`).join("");
-  $$("#out [data-c2]").forEach(b=>b.onclick=()=>
-    openCand(decodeURIComponent(b.dataset.c2)));
 }
 
 /* ─────────── גיליונות ─────────── */
@@ -715,7 +864,7 @@ function openVote(id){
   const list=(t,arr,cls)=>`<div class="sec"><h3>${t} · ${arr.length}</h3>
     ${arr.length?`<div class="txt">${arr.map(x=>
       `<span style="color:var(--${cls})">${x.nm}</span>
-       <span style="color:var(--dim);font-size:12px">${x.f}</span>`).join(" · ")}</div>`
+       <span style="color:var(--dim);font-size:12px">${esc(x.f)}</span>`).join(" · ")}</div>`
      :`<div style="color:var(--dim);font-size:13px">אף אחד לא הצביע ${t}.</div>`}
     </div>`;
   openSheet(`<div class="hd"><button class="x">✕</button><b>הצבעה</b>
@@ -741,7 +890,7 @@ function openVote(id){
    <div class="sec"><h3>לפי סיעה</h3>${fv.map(r=>{
      const t=r.yes+r.no+r.ab||1;
      return `<div style="margin-bottom:11px">
-       <div style="display:flex;font-size:13px"><span style="flex:1">${r.f}</span>
+       <div style="display:flex;font-size:13px"><span style="flex:1">${esc(r.f)}</span>
          <span class="n" style="color:var(--dim);font-size:11.5px">${r.yes} בעד · ${r.no} נגד${
            r.ab?` · ${r.ab} נמנע`:""}</span></div>
        <div class="split" style="height:14px;margin-top:5px">
@@ -772,16 +921,20 @@ async function openPerson(pid,mkid){
   try{hist=await (await fetch(`history/${pid}.json`)).json();}catch(e){}
   const cand=CAND&&CAND.rows.find(r=>r.person_id===pid);
   openSheet(`<div class="hd"><button class="x">✕</button><b>${m.name}</b></div>
-   <div class="hero"><div class="face">${m.name.split(" ").map(w=>w[0]).join("").slice(0,2)}</div>
-     <div><h2>${m.name}</h2>
+   <div class="hero">${avatar(pid,m.name,"big")}
+     <div><h2>${esc(m.name)}</h2>
        <div class="sub">${m.faction} · כנסת ${m.knesset}<br>${
          m.bloc==="coalition"?"קואליציה":"אופוזיציה"}${
          m.is_faction_chair?" · יו״ר סיעה":""}${
          cand?`<br><span style="color:var(--sky)">מתמודד/ת ברשימת ${cand.list}${
            cand.pos?`, מקום ${cand.pos}`:""}</span>`:""}</div>
        <div class="lnks">${m.url?`<a href="${m.url}" target="_blank">דף באתר הכנסת</a>`:""}
-         ${m.odata?`<a href="${m.odata}" target="_blank">הרשומה הגולמית</a>`:""}</div>
+         ${m.odata?`<a href="${m.odata}" target="_blank">הרשומה הגולמית</a>`:""}
+         ${(PHOTOS[pid]||{}).url?`<a href="${esc(PHOTOS[pid].url)}" target="_blank">ויקיפדיה</a>`:""}</div>
      </div></div>
+   ${(PHOTOS[pid]||{}).sum?`<div class="sec"><h3>רקע</h3>
+     <div class="txt">${esc(PHOTOS[pid].sum)}</div>
+     <div class="note">מקור: ויקיפדיה. שאר הנתונים בעמוד זה מהכנסת.</div></div>`:""}
    <div class="sec"><h3>הצבעות בטווח שנבחר</h3><div class="grid">
      <div class="cell"><div class="v n">${(v.f||0).toLocaleString()}</div><div class="k">בעד</div></div>
      <div class="cell"><div class="v n">${(v.a||0).toLocaleString()}</div><div class="k">נגד</div></div>
