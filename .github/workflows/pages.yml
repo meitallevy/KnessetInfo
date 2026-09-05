@@ -1,0 +1,44 @@
+name: פרסום ל-GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: בדיקת שלמות
+        run: |
+          for f in index.html knesset_web.db people_index.json candidates.json; do
+            [ -f "$f" ] || { echo "חסר: $f"; exit 1; }
+          done
+          n=$(ls history/*.json 2>/dev/null | wc -l)
+          echo "history: $n קבצים"
+          [ "$n" -gt 100 ] || { echo "תיקיית history חסרה או חלקית"; exit 1; }
+          # GitHub חוסם קבצים מעל 100MB
+          big=$(find . -type f -size +99M -not -path "./.git/*")
+          [ -z "$big" ] || { echo "קבצים גדולים מדי: $big"; exit 1; }
+          echo "הכל תקין"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4
